@@ -5,16 +5,16 @@
   var DEFAULT_START = '2026-11-10';
   var DAYS_IN_YEAR = 365;      // año normal; los bisiestos se calculan con daysInYear()
   var MAX_GOAL = 365;
-  // Plan anual (días al año). El total es siempre la suma de los tres.
-  var DEFAULT_GOALS = { gym: 64, run: 23, swim: 19 };
-
-  var ACTS = [
-    { id: 'gym', name: 'Gym', emoji: '🏋️', color: '#4f8cff' },
-    { id: 'run', name: 'Correr', emoji: '🏃', color: '#ff8a3d' },
-    { id: 'swim', name: 'Nadar', emoji: '🏊', color: '#22b8cf' },
-    { id: 'football', name: 'Fútbol', emoji: '⚽', color: '#40c057' },
-    { id: 'padel', name: 'Pádel', emoji: '🎾', color: '#e64980' }
+  // Deportes por defecto. goal=true: lleva objetivo (suma al total); annual = plan en días al año.
+  var DEFAULT_SPORTS = [
+    { id: 'gym', name: 'Gym', emoji: '🏋️', color: '#4f8cff', goal: true, annual: 64 },
+    { id: 'run', name: 'Correr', emoji: '🏃', color: '#ff8a3d', goal: true, annual: 23 },
+    { id: 'swim', name: 'Nadar', emoji: '🏊', color: '#22b8cf', goal: true, annual: 19 },
+    { id: 'football', name: 'Fútbol', emoji: '⚽', color: '#40c057', goal: false, annual: 0 },
+    { id: 'padel', name: 'Pádel', emoji: '🎾', color: '#e64980', goal: false, annual: 0 }
   ];
+  var ACTS = DEFAULT_SPORTS;
+  var PALETTE = ['#a78bfa', '#f59e0b', '#14b8a6', '#f43f5e', '#84cc16', '#38bdf8', '#d946ef', '#fb923c'];
 
   function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -78,17 +78,19 @@
     return c;
   }
 
-  // Días con cada actividad en un mes concreto (m: 0-11).
-  function monthDayCounts(days, y, m) {
+  // Días con cada deporte en un mes concreto (m: 0-11).
+  function monthDayCounts(days, y, m, sports) {
+    sports = sports || DEFAULT_SPORTS;
     var prefix = y + '-' + pad(m + 1) + '-';
     var out = {};
-    ACTS.forEach(function (a) { out[a.id] = 0; });
+    sports.forEach(function (a) { out[a.id] = 0; });
     Object.keys(days).forEach(function (k) {
       if (k.indexOf(prefix) === 0) {
         days[k].forEach(function (id) { if (id in out) out[id]++; });
       }
     });
-    out.total = out.gym + out.run + out.swim;
+    out.total = 0;
+    sports.forEach(function (a) { if (a.goal) out.total += out[a.id]; });
     return out;
   }
 
@@ -125,36 +127,45 @@
     return Math.ceil(deficit / extraPerWeek - 1e-9);
   }
 
-  function sumGoals(g) { return g.gym + g.run + g.swim; }
+  function goalSports(sports) { return (sports || DEFAULT_SPORTS).filter(function (a) { return a.goal; }); }
 
-  function copyDefaults() { return { gym: DEFAULT_GOALS.gym, run: DEFAULT_GOALS.run, swim: DEFAULT_GOALS.swim }; }
+  function sumGoals(g, sports) {
+    var t = 0;
+    goalSports(sports).forEach(function (a) { t += g[a.id] || 0; });
+    return t;
+  }
 
   // Plan anual repartido en proporción a los días del periodo (para el primer tramo, más corto).
-  function prorated(year, startISO) {
-    var n = periodDays(year, startISO), dim = daysInYear(year);
-    return {
-      gym: Math.round(DEFAULT_GOALS.gym * n / dim),
-      run: Math.round(DEFAULT_GOALS.run * n / dim),
-      swim: Math.round(DEFAULT_GOALS.swim * n / dim)
-    };
+  function prorated(year, startISO, sports) {
+    var n = periodDays(year, startISO), dim = daysInYear(year), out = {};
+    goalSports(sports).forEach(function (a) { out[a.id] = Math.round(a.annual * n / dim); });
+    return out;
   }
 
-  // Valida objetivos (de la memoria del móvil o de una copia). Devuelve {gym, run, swim} o null si no valen.
-  function sanitizeGoals(g) {
-    if (!g || typeof g !== 'object') return null;
+  function annualGoals(sports) {
     var out = {};
-    var ok = ['gym', 'run', 'swim'].every(function (id) {
-      var v = g[id];
-      if (v === null || v === undefined || v === '' || typeof v === 'boolean') return false;
-      var n = Math.round(Number(v));
-      if (!isFinite(n)) return false;
-      out[id] = Math.min(Math.max(n, 0), MAX_GOAL);
-      return true;
-    });
-    return ok ? out : null;
+    goalSports(sports).forEach(function (a) { out[a.id] = a.annual; });
+    return out;
   }
 
-  // Objetivos guardados por año: {"2026": {gym, run, swim}, "2027": {...}}. Devuelve {} si no hay nada válido.
+  var ID_RE = /^[a-z0-9_-]{1,30}$/;
+
+  // Valida objetivos guardados: {idDeporte: días}. Devuelve un objeto (puede faltar algún deporte) o null.
+  function sanitizeGoals(g) {
+    if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+    var out = {}, any = false;
+    Object.keys(g).forEach(function (id) {
+      var v = g[id];
+      if (!ID_RE.test(id) || v === null || v === undefined || v === '' || typeof v === 'boolean') return;
+      var n = Math.round(Number(v));
+      if (!isFinite(n)) return;
+      out[id] = Math.min(Math.max(n, 0), MAX_GOAL);
+      any = true;
+    });
+    return any ? out : null;
+  }
+
+  // Objetivos guardados por año: {"2026": {gym: 9, ...}}. Devuelve {} si no hay nada válido.
   function sanitizeGoalsByYear(obj) {
     var out = {};
     if (!obj || typeof obj !== 'object') return out;
@@ -168,19 +179,55 @@
     return out;
   }
 
-  // Objetivos de un periodo.
-  // - Periodo recortado (el primero): los suyos, o el plan anual repartido en proporción.
-  // - Año completo: los suyos, o los del último año completo anterior, o el plan anual.
-  function goalsForYear(map, year, startISO) {
+  // Valida la lista de deportes. Devuelve la lista limpia o null si no es una lista.
+  function sanitizeSports(arr) {
+    if (!Array.isArray(arr)) return null;
+    var seen = {}, out = [];
+    arr.forEach(function (a) {
+      if (!a || typeof a !== 'object' || !ID_RE.test(a.id) || seen[a.id]) return;
+      var name = typeof a.name === 'string' ? a.name.trim().slice(0, 20) : '';
+      if (!name) return;
+      var emoji = typeof a.emoji === 'string' && a.emoji.trim() ? a.emoji.trim().slice(0, 8) : '🏅';
+      var color = typeof a.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(a.color) ? a.color : '#a78bfa';
+      var annual = Math.min(Math.max(Math.round(Number(a.annual)) || 0, 0), MAX_GOAL);
+      seen[a.id] = 1;
+      out.push({ id: a.id, name: name, emoji: emoji, color: color, goal: !!a.goal, annual: a.goal ? annual : 0 });
+    });
+    return out;
+  }
+
+  // Crea un identificador a partir del nombre ("Yoga suave" -> "yoga-suave").
+  function slug(name) {
+    var t = String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+    return t || 'deporte';
+  }
+
+  // Objetivos de un periodo, deporte a deporte.
+  // - Periodo recortado (el primero): el suyo guardado, o el plan anual repartido en proporción.
+  // - Año completo: el del último año completo anterior que lo tenga, o el plan anual.
+  function goalsForYear(map, year, startISO, sports) {
     startISO = startISO || DEFAULT_START;
     map = map || {};
-    if (isPartial(year, startISO)) return sanitizeGoals(map[year]) || prorated(year, startISO);
-    var best = null;
-    Object.keys(map).forEach(function (k) {
-      var y = Number(k);
-      if (y <= year && !isPartial(y, startISO) && (best === null || y > best)) best = y;
+    var partial = isPartial(year, startISO);
+    var pr = partial ? prorated(year, startISO, sports) : annualGoals(sports);
+    var out = {};
+    goalSports(sports).forEach(function (a) {
+      var v = null;
+      if (partial) {
+        var g = sanitizeGoals(map[year]);
+        if (g && a.id in g) v = g[a.id];
+      } else {
+        var best = null;
+        Object.keys(map).forEach(function (k) {
+          var y = Number(k), g2 = sanitizeGoals(map[k]);
+          if (y <= year && !isPartial(y, startISO) && g2 && a.id in g2 && (best === null || y > best)) best = y;
+        });
+        if (best !== null) v = sanitizeGoals(map[best])[a.id];
+      }
+      out[a.id] = v === null ? pr[a.id] : v;
     });
-    return (best === null ? null : sanitizeGoals(map[best])) || copyDefaults();
+    return out;
   }
 
   // Valida una fecha de inicio "AAAA-MM-DD". Devuelve la misma fecha o null.
@@ -192,23 +239,26 @@
     return s;
   }
 
-  function summary(days, ref, goals, year, startISO) {
+  function summary(days, ref, goals, year, startISO, sports) {
     startISO = startISO || DEFAULT_START;
+    sports = sports || DEFAULT_SPORTS;
     year = year || startYear(startISO);
-    var g = sanitizeGoals(goals) || DEFAULT_GOALS;
     var total = periodDays(year, startISO);
     var refISO = iso(ref);
     var el = elapsedDays(ref, year, startISO);
-    var out = { elapsed: el, year: year, periodDays: total };
-    var tot = 0;
-    ['gym', 'run', 'swim'].forEach(function (id) {
-      var done = countUpTo(days, id, refISO, year, startISO);
-      tot += done;
-      out[id] = analyze(done, g[id], el, total);
+    var out = { elapsed: el, year: year, periodDays: total, bySport: {}, counts: {} };
+    var tot = 0, goalTot = 0;
+    sports.forEach(function (a) {
+      var done = countUpTo(days, a.id, refISO, year, startISO);
+      if (a.goal) {
+        var g = Math.min(Math.max(Math.round(Number(goals && goals[a.id])) || 0, 0), MAX_GOAL);
+        tot += done; goalTot += g;
+        out.bySport[a.id] = analyze(done, g, el, total);
+      } else {
+        out.counts[a.id] = done;
+      }
     });
-    out.total = analyze(tot, sumGoals(g), el, total);
-    out.football = countUpTo(days, 'football', refISO, year, startISO);
-    out.padel = countUpTo(days, 'padel', refISO, year, startISO);
+    out.total = analyze(tot, goalTot, el, total);
     return out;
   }
 
@@ -221,21 +271,21 @@
   // Valida una copia de seguridad importada. Devuelve {fecha: [ids]} o null si no es válida.
   function sanitizeImport(obj) {
     if (!obj || typeof obj !== 'object' || !obj.days || typeof obj.days !== 'object') return null;
-    var ids = ACTS.map(function (a) { return a.id; });
     var days = {};
     Object.keys(obj.days).forEach(function (k) {
       var v = obj.days[k];
       if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !Array.isArray(v)) return;
-      var f = ids.filter(function (id) { return v.indexOf(id) >= 0; });
+      var f = v.filter(function (id, i) { return typeof id === 'string' && ID_RE.test(id) && v.indexOf(id) === i; });
       if (f.length) days[k] = f;
     });
     return days;
   }
 
   var api = {
-    DEFAULT_START: DEFAULT_START, DAYS_IN_YEAR: DAYS_IN_YEAR, ACTS: ACTS,
-    DEFAULT_GOALS: DEFAULT_GOALS, MAX_GOAL: MAX_GOAL, sumGoals: sumGoals, sanitizeGoals: sanitizeGoals,
-    sanitizeGoalsByYear: sanitizeGoalsByYear, goalsForYear: goalsForYear, prorated: prorated,
+    DEFAULT_START: DEFAULT_START, DAYS_IN_YEAR: DAYS_IN_YEAR, ACTS: ACTS, DEFAULT_SPORTS: DEFAULT_SPORTS, PALETTE: PALETTE,
+    MAX_GOAL: MAX_GOAL, goalSports: goalSports, annualGoals: annualGoals, sumGoals: sumGoals, sanitizeGoals: sanitizeGoals,
+    sanitizeGoalsByYear: sanitizeGoalsByYear, sanitizeSports: sanitizeSports, slug: slug,
+    goalsForYear: goalsForYear, prorated: prorated,
     sanitizeStart: sanitizeStart, daysInYear: daysInYear, startYear: startYear, periodStartISO: periodStartISO,
     isPartial: isPartial, periodDays: periodDays, objectiveYear: objectiveYear,
     pad: pad, iso: iso, parseISO: parseISO, elapsedDays: elapsedDays, countUpTo: countUpTo,
