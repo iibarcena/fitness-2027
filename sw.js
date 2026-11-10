@@ -1,6 +1,6 @@
 // Service worker: deja la app funcionando sin internet.
 // Para publicar cambios, sube el número de versión de CACHE.
-var CACHE = 'fitness2027-v1';
+var CACHE = 'fitness2027-v3';
 var ASSETS = ['./', 'index.html', 'style.css', 'logic.js', 'app.js', 'manifest.json',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 

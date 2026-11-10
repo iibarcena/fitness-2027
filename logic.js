@@ -1,17 +1,21 @@
 (function (root) {
   'use strict';
 
-  var YEAR = 2027;
-  var DAYS_IN_YEAR = 365;
-  var GOALS = { gym: 64, run: 23, swim: 19 };
+  var FIRST_YEAR = 2027;       // primer año con objetivo
+  var YEAR = FIRST_YEAR;       // (por compatibilidad)
+  var DAYS_IN_YEAR = 365;      // año normal; los bisiestos se calculan con daysInYear()
+  var MAX_GOAL = 365;
+  // Objetivos del plan inicial (días al año). El total es siempre la suma de los tres.
+  var DEFAULT_GOALS = { gym: 64, run: 23, swim: 19 };
+  var GOALS = DEFAULT_GOALS;
   var GOAL_TOTAL = 106;
 
   var ACTS = [
-    { id: 'gym', name: 'Gym', emoji: '🏋️', color: '#4f8cff', goal: 64 },
-    { id: 'run', name: 'Correr', emoji: '🏃', color: '#ff8a3d', goal: 23 },
-    { id: 'swim', name: 'Nadar', emoji: '🏊', color: '#22b8cf', goal: 19 },
-    { id: 'football', name: 'Fútbol', emoji: '⚽', color: '#40c057', goal: null },
-    { id: 'padel', name: 'Pádel', emoji: '🎾', color: '#e64980', goal: null }
+    { id: 'gym', name: 'Gym', emoji: '🏋️', color: '#4f8cff' },
+    { id: 'run', name: 'Correr', emoji: '🏃', color: '#ff8a3d' },
+    { id: 'swim', name: 'Nadar', emoji: '🏊', color: '#22b8cf' },
+    { id: 'football', name: 'Fútbol', emoji: '⚽', color: '#40c057' },
+    { id: 'padel', name: 'Pádel', emoji: '🎾', color: '#e64980' }
   ];
 
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -25,20 +29,30 @@
     return new Date(p[0], p[1] - 1, p[2]);
   }
 
-  // Días transcurridos del año del objetivo, contando el día de "ref" (0 si el año no ha empezado).
-  function elapsedDays(ref) {
-    if (ref.getFullYear() < YEAR) return 0;
-    if (ref.getFullYear() > YEAR) return DAYS_IN_YEAR;
-    var start = new Date(YEAR, 0, 1);
-    var r = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
-    var n = Math.round((r - start) / 86400000) + 1;
-    return Math.min(Math.max(n, 0), DAYS_IN_YEAR);
+  function daysInYear(y) {
+    return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
   }
 
-  // Cuántos días del año del objetivo tienen esa actividad, hasta refISO incluido.
-  function countUpTo(days, id, refISO) {
-    var from = YEAR + '-01-01';
-    var to = YEAR + '-12-31';
+  // Año del objetivo en curso: 2027 hasta que empiece, y el año actual a partir de entonces.
+  function objectiveYear(now) { return Math.max(FIRST_YEAR, now.getFullYear()); }
+
+  // Días transcurridos del año del objetivo, contando el día de "ref" (0 si el año no ha empezado).
+  function elapsedDays(ref, year) {
+    year = year || FIRST_YEAR;
+    var dim = daysInYear(year);
+    if (ref.getFullYear() < year) return 0;
+    if (ref.getFullYear() > year) return dim;
+    var start = new Date(year, 0, 1);
+    var r = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+    var n = Math.round((r - start) / 86400000) + 1;
+    return Math.min(Math.max(n, 0), dim);
+  }
+
+  // Cuántos días de ese año tienen esa actividad, hasta refISO incluido.
+  function countUpTo(days, id, refISO, year) {
+    year = year || FIRST_YEAR;
+    var from = year + '-01-01';
+    var to = year + '-12-31';
     var c = 0;
     Object.keys(days).forEach(function (k) {
       if (k >= from && k <= to && k <= refISO && days[k].indexOf(id) >= 0) c++;
@@ -61,15 +75,18 @@
   }
 
   // Compara lo hecho con lo que tocaría llevar a esa fecha (objetivo repartido por días del año).
-  function analyze(done, goal, elapsed) {
-    var rate = goal / DAYS_IN_YEAR;
-    var expected = goal * elapsed / DAYS_IN_YEAR;
+  function analyze(done, goal, elapsed, total) {
+    total = total || DAYS_IN_YEAR;
+    var rate = goal / total;
+    var expected = goal * elapsed / total;
     var diff = done - expected;
     var res = {
       done: done, goal: goal, rate: rate, expected: expected, diff: diff,
       weeklyPace: rate * 7, status: 'ok', missing: 0, daysInARow: 0, skipDays: 0
     };
-    if (elapsed === 0) {
+    if (!(goal > 0)) {
+      res.status = 'nogoal';
+    } else if (elapsed === 0) {
       res.status = 'notstarted';
     } else if (diff <= -0.5) {
       var deficit = -diff;
@@ -90,19 +107,73 @@
     return Math.ceil(deficit / extraPerWeek - 1e-9);
   }
 
-  function summary(days, ref) {
+  function sumGoals(g) { return g.gym + g.run + g.swim; }
+
+  function copyDefaults() { return { gym: DEFAULT_GOALS.gym, run: DEFAULT_GOALS.run, swim: DEFAULT_GOALS.swim }; }
+
+  // Valida objetivos (de la memoria del móvil o de una copia). Devuelve {gym, run, swim} o null si no valen.
+  function sanitizeGoals(g) {
+    if (!g || typeof g !== 'object') return null;
+    var out = {};
+    var ok = ['gym', 'run', 'swim'].every(function (id) {
+      var v = g[id];
+      if (v === null || v === undefined || v === '' || typeof v === 'boolean') return false;
+      var n = Math.round(Number(v));
+      if (!isFinite(n)) return false;
+      out[id] = Math.min(Math.max(n, 0), MAX_GOAL);
+      return true;
+    });
+    return ok ? out : null;
+  }
+
+  // Objetivos guardados por año: {"2027": {gym, run, swim}, "2028": {...}}. Devuelve {} si no hay nada válido.
+  function sanitizeGoalsByYear(obj) {
+    var out = {};
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(function (k) {
+      if (!/^\d{4}$/.test(k)) return;
+      var y = Number(k);
+      if (y < FIRST_YEAR || y > 2100) return;
+      var g = sanitizeGoals(obj[k]);
+      if (g) out[k] = g;
+    });
+    return out;
+  }
+
+  // Objetivos de un año: los suyos, o si no tiene, los del último año anterior que los tuviera, o los iniciales.
+  function goalsForYear(map, year) {
+    var best = null;
+    Object.keys(map || {}).forEach(function (k) {
+      var y = Number(k);
+      if (y <= year && (best === null || y > best)) best = y;
+    });
+    if (best === null) return copyDefaults();
+    return sanitizeGoals(map[best]) || copyDefaults();
+  }
+
+  // Días que faltan para el 1 de enero del primer año del objetivo (0 si ya ha empezado).
+  function daysUntilStart(now) {
+    var start = new Date(FIRST_YEAR, 0, 1);
+    var n = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.max(0, Math.round((start - n) / 86400000));
+  }
+
+  function summary(days, ref, goals, year) {
+    year = year || FIRST_YEAR;
+    var g = sanitizeGoals(goals) || DEFAULT_GOALS;
+    var dim = daysInYear(year);
     var refISO = iso(ref);
-    var el = elapsedDays(ref);
-    var out = { elapsed: el };
+    var el = elapsedDays(ref, year);
+    var out = { elapsed: el, year: year };
     var tot = 0;
     ['gym', 'run', 'swim'].forEach(function (id) {
-      var done = countUpTo(days, id, refISO);
+      var done = countUpTo(days, id, refISO, year);
       tot += done;
-      out[id] = analyze(done, GOALS[id], el);
+      out[id] = analyze(done, g[id], el, dim);
     });
-    out.total = analyze(tot, GOAL_TOTAL, el);
-    out.football = countUpTo(days, 'football', refISO);
-    out.padel = countUpTo(days, 'padel', refISO);
+    out.total = analyze(tot, sumGoals(g), el, dim);
+    out.football = countUpTo(days, 'football', refISO, year);
+    out.padel = countUpTo(days, 'padel', refISO, year);
     return out;
   }
 
@@ -127,7 +198,10 @@
   }
 
   var api = {
-    YEAR: YEAR, DAYS_IN_YEAR: DAYS_IN_YEAR, GOALS: GOALS, GOAL_TOTAL: GOAL_TOTAL, ACTS: ACTS,
+    FIRST_YEAR: FIRST_YEAR, YEAR: YEAR, DAYS_IN_YEAR: DAYS_IN_YEAR, GOALS: GOALS, GOAL_TOTAL: GOAL_TOTAL, ACTS: ACTS,
+    DEFAULT_GOALS: DEFAULT_GOALS, MAX_GOAL: MAX_GOAL, sumGoals: sumGoals, sanitizeGoals: sanitizeGoals,
+    sanitizeGoalsByYear: sanitizeGoalsByYear, goalsForYear: goalsForYear, daysUntilStart: daysUntilStart,
+    daysInYear: daysInYear, objectiveYear: objectiveYear,
     pad: pad, iso: iso, parseISO: parseISO, elapsedDays: elapsedDays, countUpTo: countUpTo,
     monthDayCounts: monthDayCounts, analyze: analyze, weeksToCatchUp: weeksToCatchUp,
     summary: summary, fmt: fmt, sanitizeImport: sanitizeImport
