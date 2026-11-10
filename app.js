@@ -2,28 +2,31 @@
   'use strict';
 
   var L = window.Logic;
-  var ACTS = L.ACTS, FIRST_YEAR = L.FIRST_YEAR, iso = L.iso, parseISO = L.parseISO, pad = L.pad, fmt = L.fmt;
+  var ACTS = L.ACTS, iso = L.iso, parseISO = L.parseISO, pad = L.pad, fmt = L.fmt;
 
   var KEY = 'fitness2027.v1';
   var BK = 'fitness2027.lastBackup';
-  var GK = 'fitness2027.goals.v1';   // objetivos por año: {"2027": {gym, run, swim}}
-  var MIN = { y: 2026, m: 10 };      // noviembre 2026 (para pruebas)
-  var VERSION = '4';                 // súbela junto con ?v= en index.html y CACHE en sw.js
+  var GK = 'fitness2027.goals.v1';   // objetivos por año: {"2026": {gym, run, swim}}
+  var SK = 'fitness2027.start.v1';   // día en que empieza el objetivo
+  var VERSION = '5';                 // súbela junto con ?v= en index.html y CACHE en sw.js
 
   var days = load();
   var goalsByYear = loadGoals();
+  var startISO = loadStart();
   var today = new Date();
   var selected = iso(today);
   var tab = 'days';
 
-  // Año del objetivo en curso: 2027 hasta que empiece y, después, el año actual.
-  function objYear() { return L.objectiveYear(new Date()); }
+  // Año del objetivo en curso: el del inicio hasta el 31 de diciembre y, después, el año actual.
+  function objYear() { return L.objectiveYear(new Date(), startISO); }
   function maxMonth() { return { y: objYear(), m: 11 }; }
-  function goalsFor(year) { return L.goalsForYear(goalsByYear, year); }
+  function minMonth() { var d = parseISO(startISO); return { y: d.getFullYear(), m: d.getMonth() }; }
+  function goalsFor(year) { return L.goalsForYear(goalsByYear, year, startISO); }
+  function longDate(s) { return parseISO(s).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }); }
 
   function clampMonth(mm) {
     var v = mm.y * 12 + mm.m;
-    var lo = MIN.y * 12 + MIN.m, mx = maxMonth(), hi = mx.y * 12 + mx.m;
+    var mn = minMonth(), lo = mn.y * 12 + mn.m, mx = maxMonth(), hi = mx.y * 12 + mx.m;
     v = Math.min(Math.max(v, lo), hi);
     return { y: Math.floor(v / 12), m: v % 12 };
   }
@@ -51,6 +54,14 @@
     } catch (e) { return {}; }
   }
 
+  function loadStart() {
+    try { return L.sanitizeStart(localStorage.getItem(SK)) || L.DEFAULT_START; } catch (e) { return L.DEFAULT_START; }
+  }
+
+  function saveStart() {
+    try { localStorage.setItem(SK, startISO); } catch (e) {}
+  }
+
   function saveGoals() {
     try {
       localStorage.setItem(GK, JSON.stringify(goalsByYear));
@@ -58,8 +69,6 @@
       alert('No he podido guardar los objetivos en el móvil. Revisa que Safari no esté en modo privado.');
     }
   }
-
-  function defaultGoals() { return JSON.parse(JSON.stringify(L.DEFAULT_GOALS)); }
 
   // Cambia un objetivo del año en curso. Los años anteriores conservan los suyos.
   function setGoal(id, value) {
@@ -79,7 +88,7 @@
     return cap(new Date(mm.y, mm.m, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }));
   }
   function shiftMonth(mm, d) { return clampMonth({ y: mm.y, m: mm.m + d }); }
-  function atMin(mm) { return mm.y * 12 + mm.m <= MIN.y * 12 + MIN.m; }
+  function atMin(mm) { var mn = minMonth(); return mm.y * 12 + mm.m <= mn.y * 12 + mn.m; }
   function atMax(mm) { var mx = maxMonth(); return mm.y * 12 + mm.m >= mx.y * 12 + mx.m; }
 
   /* ---------- Pantalla: días ---------- */
@@ -122,7 +131,7 @@
 
     html += '<section class="panel"><div class="panelhead"><h3>' + label + '</h3>' +
       (selected !== todayISO ? '<button class="link" data-act="go-today">Ir a hoy</button>' : '') + '</div>';
-    if (sd.getFullYear() < FIRST_YEAR) html += '<p class="note">🧪 Prueba: este día no cuenta para el objetivo de ' + FIRST_YEAR + '.</p>';
+    if (selected < startISO) html += '<p class="note">Este día es anterior al inicio del objetivo (' + longDate(startISO) + ') y no cuenta.</p>';
     if (isFuture) html += '<p class="note">Este día aún no ha llegado.</p>';
     html += '<div class="toggles">';
     ACTS.forEach(function (a) {
@@ -147,7 +156,7 @@
   // mode: 'live' (hasta hoy), 'past' (a una fecha ya pasada) o 'final' (resultado de un año cerrado)
   function statusHTML(a, mode) {
     if (a.status === 'nogoal') return '<p class="muted">Sin objetivo: puedes ponerlo en la pantalla del +.</p>';
-    if (a.status === 'notstarted') return '<p class="muted">El objetivo empieza el 1 de enero de ' + FIRST_YEAR + '.</p>';
+    if (a.status === 'notstarted') return '<p class="muted">El objetivo aún no ha empezado.</p>';
     if (mode === 'final') {
       if (a.done >= a.goal) {
         return '<p class="ok">🏆 Objetivo cumplido' + (a.done > a.goal ? ' (+' + (a.done - a.goal) + ')' : '') + '</p>';
@@ -205,7 +214,7 @@
     var y = repMonth.y, m = repMonth.m;
     var now = new Date();
     var oy = objYear();
-    var vy = Math.max(FIRST_YEAR, y);            // año del objetivo al que pertenece el mes que miras
+    var vy = y;                                  // año del objetivo al que pertenece el mes que miras
     var monthStart = new Date(y, m, 1);
     var monthEnd = new Date(y, m + 1, 0);
     var past = monthEnd < now;                   // ¿miras una fecha que ya ha pasado?
@@ -213,20 +222,21 @@
     var mode = past ? 'past' : 'live';
     var refLabel = past ? 'a final de ' + monthLabel(repMonth).toLowerCase() : 'a hoy';
     var mc = L.monthDayCounts(days, y, m);
-    var left = L.daysUntilStart(now);
+    var sy = L.startYear(startISO);
     var html = '';
 
-    if (left > 0) {
-      html += '<section class="banner"><b>🗓️ El objetivo empieza el 1 de enero de ' + FIRST_YEAR + '</b>' +
-        '<p>' + (left === 1 ? 'Falta 1 día.' : 'Faltan ' + left + ' días.') +
-        ' Lo que marques ahora es de prueba y no cuenta: el 1 de enero todos los contadores empiezan desde cero.</p></section>';
+    // Aviso del primer periodo (recortado): del día de inicio al 31 de diciembre
+    if (L.isPartial(oy, startISO) && vy === oy) {
+      html += '<section class="banner"><b>🗓️ Objetivo en marcha desde el ' + longDate(startISO) + '</b>' +
+        '<p>Dura hasta el 31 de diciembre (' + L.periodDays(oy, startISO) + ' días). ' +
+        'El 1 de enero empieza un año nuevo y todos los contadores vuelven a cero.</p></section>';
     }
 
     // Selector de año: aparece cuando ya hay algún año anterior que consultar
-    if (oy > FIRST_YEAR) {
+    if (oy > sy) {
       html += '<div class="pills">';
-      for (var yy = FIRST_YEAR; yy <= oy; yy++) {
-        html += '<button class="pill' + (yy === vy && y >= FIRST_YEAR ? ' active' : '') + '" data-year="' + yy + '">' + yy + '</button>';
+      for (var yy = sy; yy <= oy; yy++) {
+        html += '<button class="pill' + (yy === vy ? ' active' : '') + '" data-year="' + yy + '">' + yy + '</button>';
       }
       html += '</div>';
     }
@@ -236,20 +246,9 @@
       '<h2>' + monthLabel(repMonth) + '</h2>' +
       '<button class="icon" data-act="rep-next"' + (atMax(repMonth) ? ' disabled' : '') + '>›</button></div>';
 
-    // Mes de prueba de 2026 mirado cuando el objetivo ya ha empezado: solo los días de ese mes
-    if (y < FIRST_YEAR && left === 0) {
-      html += '<p class="note">🧪 Mes de prueba: no cuenta para el objetivo.</p>';
-      html += '<h4 class="sect">Este mes (prueba)</h4><section class="card plain">';
-      ACTS.forEach(function (a) {
-        html += '<div class="row"><span>' + a.emoji + ' ' + a.name + '</span><b>' + mc[a.id] + '</b></div>';
-      });
-      html += '</section>' + backupHTML();
-      return html;
-    }
-
     if (monthStart > now) html += '<p class="note">Este mes aún no ha empezado. Abajo ves el acumulado a hoy.</p>';
 
-    var s = L.summary(days, ref, goalsFor(vy), vy);
+    var s = L.summary(days, ref, goalsFor(vy), vy, startISO);
     var closed = vy < oy;                         // año ya cerrado
     var isFinal = closed && m === 11 && y === vy; // diciembre de un año cerrado = resultado final
     if (isFinal) mode = 'final';
@@ -273,19 +272,42 @@
 
   /* ---------- Pantalla: objetivos (botón +) ---------- */
 
-  function perWeek(n, year) { return fmt(n * 7 / L.daysInYear(year)); }
+  function perWeek(n, year) { return fmt(n * 7 / L.periodDays(year, startISO)); }
 
   function renderGoals() {
     var gy = objYear();
     var goals = goalsFor(gy);
     var total = L.sumGoals(goals);
-    var same = ['gym', 'run', 'swim'].every(function (id) { return goals[id] === L.DEFAULT_GOALS[id]; });
+    var partial = L.isPartial(gy, startISO);
+    var nd = L.periodDays(gy, startISO);
+    var ref = partial ? L.prorated(gy, startISO) : L.DEFAULT_GOALS;
+    var unit = partial ? 'días en este periodo' : 'días al año';
+    var same = ['gym', 'run', 'swim'].every(function (id) { return goals[id] === ref[id]; });
     var html = '<header class="hello"><p class="hi">Tu plan</p><h1>Objetivos de ' + gy + '</h1></header>';
 
-    html += '<section class="hero"><p class="herolabel">🎯 Total al año</p>' +
+    html += '<section class="hero"><p class="herolabel">🎯 ' + (partial ? 'Total de este periodo' : 'Total al año') + '</p>' +
       '<div class="herobig">' + total + '<small> días</small></div>' +
-      '<p class="sub">≈ ' + perWeek(total, gy) + ' por semana, contando el año completo (vacaciones y bajas incluidas). ' +
+      '<p class="sub">' + (partial
+        ? 'Del ' + longDate(L.periodStartISO(gy, startISO)) + ' al 31 de diciembre (' + nd + ' días). '
+        : '') +
+      '≈ ' + perWeek(total, gy) + ' por semana' + (partial ? '. ' : ', contando el año completo (vacaciones y bajas incluidas). ') +
       'El total es la suma de los tres.</p></section>';
+
+    if (partial) {
+      var sd0 = parseISO(startISO), thisYear = new Date().getFullYear();
+      function opts(from, to, sel, label) {
+        var o = '';
+        for (var i = from; i <= to; i++) o += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + label(i) + '</option>';
+        return o;
+      }
+      var mNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      html += '<section class="card"><div class="cardhead"><h3>🗓️ Empieza el</h3></div>' +
+        '<div class="datesel">' +
+        '<select data-startpart="d" aria-label="Día">' + opts(1, 31, sd0.getDate(), String) + '</select>' +
+        '<select data-startpart="m" aria-label="Mes">' + opts(1, 12, sd0.getMonth() + 1, function (i) { return mNames[i - 1]; }) + '</select>' +
+        '<select data-startpart="y" aria-label="Año">' + opts(2020, Math.max(thisYear, sd0.getFullYear()), sd0.getFullYear(), String) + '</select></div>' +
+        '<p class="sub">Si la cambias, el informe recalcula el periodo desde ese día.</p></section>';
+    }
 
     ['gym', 'run', 'swim'].forEach(function (id) {
       var a = actById(id);
@@ -294,18 +316,25 @@
         '<div class="stepper">' +
         '<button class="step" data-goal="' + id + '" data-d="-1" aria-label="Menos ' + a.name + '"' + (goals[id] <= 0 ? ' disabled' : '') + '>−</button>' +
         '<label class="goalbox"><input class="goalinput" type="number" inputmode="numeric" min="0" max="' + L.MAX_GOAL + '" ' +
-        'value="' + goals[id] + '" data-goalinput="' + id + '" aria-label="Días al año de ' + a.name + '"><span>días al año</span></label>' +
+        'value="' + goals[id] + '" data-goalinput="' + id + '" aria-label="Días de ' + a.name + '"><span>' + unit + '</span></label>' +
         '<button class="step" data-goal="' + id + '" data-d="1" aria-label="Más ' + a.name + '"' + (goals[id] >= L.MAX_GOAL ? ' disabled' : '') + '>+</button>' +
         '</div></section>';
     });
 
     html += '<p class="legend">Fútbol y pádel no tienen objetivo: solo se cuentan los días.</p>';
-    html += '<p class="legend">Si cambias un objetivo, el informe recalcula todo el año con el objetivo nuevo, ' +
-      'como si hubiera sido ese desde el 1 de enero.</p>';
-    html += '<p class="legend">Cada 1 de enero empieza un año nuevo desde cero con estos mismos objetivos, que podrás cambiar. ' +
-      'Los informes de años anteriores conservan los objetivos que tenían.</p>';
+    if (partial) {
+      html += '<p class="legend">Estos objetivos son el plan anual (' + L.DEFAULT_GOALS.gym + ' / ' + L.DEFAULT_GOALS.run + ' / ' +
+        L.DEFAULT_GOALS.swim + ') repartido en proporción a los ' + nd + ' días que dura este periodo.</p>';
+      html += '<p class="legend">El 1 de enero empieza un año nuevo desde cero con el plan anual completo, que podrás cambiar. ' +
+        'El informe de este periodo se queda guardado con sus objetivos.</p>';
+    } else {
+      html += '<p class="legend">Si cambias un objetivo, el informe recalcula todo el año con el objetivo nuevo, ' +
+        'como si hubiera sido ese desde el 1 de enero.</p>';
+      html += '<p class="legend">Cada 1 de enero empieza un año nuevo desde cero con estos mismos objetivos, que podrás cambiar. ' +
+        'Los informes de años anteriores conservan los objetivos que tenían.</p>';
+    }
     html += '<div class="btns"><button class="btn alt" data-act="goals-reset"' + (same ? ' disabled' : '') + '>' +
-      'Volver al plan inicial (' + L.DEFAULT_GOALS.gym + ' / ' + L.DEFAULT_GOALS.run + ' / ' + L.DEFAULT_GOALS.swim + ')</button></div>';
+      (partial ? 'Volver al reparto proporcional (' : 'Volver al plan inicial (') + ref.gym + ' / ' + ref.run + ' / ' + ref.swim + ')</button></div>';
     html += '<p class="legend">Versión de la app: v' + VERSION + '</p>';
     return html;
   }
@@ -344,7 +373,7 @@
   function exportData() {
     var g = JSON.parse(JSON.stringify(goalsByYear));
     g[objYear()] = goalsFor(objYear());   // la copia siempre lleva los objetivos del año en curso
-    var text = JSON.stringify({ version: 2, exported: new Date().toISOString(), goalsByYear: g, days: days }, null, 1);
+    var text = JSON.stringify({ version: 2, exported: new Date().toISOString(), start: startISO, goalsByYear: g, days: days }, null, 1);
     var name = 'fitness-copia-' + iso(new Date()) + '.json';
     var file;
     try { file = new File([text], name, { type: 'application/json' }); } catch (e) { file = null; }
@@ -369,10 +398,11 @@
     if (!f) return;
     var r = new FileReader();
     r.onload = function () {
-      var parsed = null, gm = null;
+      var parsed = null, gm = null, st = null;
       try {
         var raw = JSON.parse(r.result);
         parsed = L.sanitizeImport(raw);
+        st = L.sanitizeStart(raw && raw.start);
         gm = L.sanitizeGoalsByYear(raw && raw.goalsByYear);
         if (gm && !Object.keys(gm).length) gm = null;
       } catch (e) {}
@@ -383,6 +413,8 @@
       if (!confirm(msg)) return;
       days = parsed;
       if (gm) { goalsByYear = gm; saveGoals(); }
+      if (st) { startISO = st; saveStart(); }
+      calMonth = clampMonth(calMonth); repMonth = clampMonth(repMonth);
       save(); render();
     };
     r.readAsText(f);
@@ -414,11 +446,26 @@
     else if (act === 'rep-next') { repMonth = shiftMonth(repMonth, 1); render(); }
     else if (act === 'export') exportData();
     else if (act === 'import') document.getElementById('file').click();
-    else if (act === 'goals-reset') { goalsByYear[objYear()] = defaultGoals(); saveGoals(); render(); }
+    else if (act === 'goals-reset') {
+      var oy = objYear();
+      delete goalsByYear[oy];   // vuelve al reparto por defecto de ese periodo
+      saveGoals(); render();
+    }
   });
 
   // Al escribir un objetivo a mano en la pantalla del +
   document.addEventListener('change', function (e) {
+    if (e.target.closest && e.target.closest('[data-startpart]')) {
+      var q = function (k) { return Number(document.querySelector('[data-startpart="' + k + '"]').value); };
+      var yy = q('y'), mm = q('m'), dd = Math.min(q('d'), new Date(yy, mm, 0).getDate());
+      var v = L.sanitizeStart(yy + '-' + pad(mm) + '-' + pad(dd));
+      if (v && v <= iso(new Date())) {
+        startISO = v; saveStart();
+        calMonth = clampMonth(calMonth); repMonth = clampMonth(repMonth);
+      }
+      render();
+      return;
+    }
     var inp = e.target.closest && e.target.closest('[data-goalinput]');
     if (inp) setGoal(inp.getAttribute('data-goalinput'), inp.value);
   });

@@ -1,8 +1,8 @@
 // Service worker: deja la app funcionando sin internet.
 // Siempre pide la versión más reciente a internet y solo usa lo guardado si no hay conexión.
 // Para publicar una versión nueva: cambia CACHE aquí, VERSION en app.js y ?v= en index.html (y en ASSETS).
-var CACHE = 'fitness-v4';
-var ASSETS = ['./', 'index.html', 'style.css?v=4', 'logic.js?v=4', 'app.js?v=4', 'manifest.json',
+var CACHE = 'fitness-v5';
+var ASSETS = ['./', 'index.html', 'style.css?v=5', 'logic.js?v=5', 'app.js?v=5', 'manifest.json',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
