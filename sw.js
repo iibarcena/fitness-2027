@@ -1,11 +1,18 @@
 // Service worker: deja la app funcionando sin internet.
-// Para publicar cambios, sube el número de versión de CACHE.
-var CACHE = 'fitness2027-v3';
-var ASSETS = ['./', 'index.html', 'style.css', 'logic.js', 'app.js', 'manifest.json',
+// Siempre pide la versión más reciente a internet y solo usa lo guardado si no hay conexión.
+// Para publicar una versión nueva: cambia CACHE aquí, VERSION en app.js y ?v= en index.html (y en ASSETS).
+var CACHE = 'fitness-v4';
+var ASSETS = ['./', 'index.html', 'style.css?v=4', 'logic.js?v=4', 'app.js?v=4', 'manifest.json',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(
+    caches.open(CACHE).then(function (c) {
+      return Promise.all(ASSETS.map(function (u) {
+        return fetch(u, { cache: 'reload' }).then(function (r) { if (r.ok) return c.put(u, r); });
+      }));
+    }).then(function () { return self.skipWaiting(); })
+  );
 });
 
 self.addEventListener('activate', function (e) {
@@ -14,14 +21,21 @@ self.addEventListener('activate', function (e) {
   }).then(function () { return self.clients.claim(); }));
 });
 
-// Primero internet (así llegan las actualizaciones); si no hay conexión, lo guardado.
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  var url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
+  // "no-cache": pregunta siempre a internet si hay algo nuevo, ignorando los 10 minutos de caché de GitHub Pages.
+  var req = new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' });
   e.respondWith(
-    fetch(e.request).then(function (res) {
-      var copy = res.clone();
-      caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+    fetch(req).then(function (res) {
+      if (res && res.ok) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+      }
       return res;
-    }).catch(function () { return caches.match(e.request); })
+    }).catch(function () {
+      return caches.match(e.request, { ignoreSearch: true }).then(function (r) { return r || caches.match('index.html'); });
+    })
   );
 });

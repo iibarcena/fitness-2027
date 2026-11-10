@@ -8,6 +8,7 @@
   var BK = 'fitness2027.lastBackup';
   var GK = 'fitness2027.goals.v1';   // objetivos por año: {"2027": {gym, run, swim}}
   var MIN = { y: 2026, m: 10 };      // noviembre 2026 (para pruebas)
+  var VERSION = '4';                 // súbela junto con ?v= en index.html y CACHE en sw.js
 
   var days = load();
   var goalsByYear = loadGoals();
@@ -196,7 +197,8 @@
       '<p class="sub">Última copia: <b>' + (last ? cap(parseISO(last).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })) : 'nunca') + '</b></p>' +
       '<div class="btns"><button class="btn" data-act="export">Exportar copia</button>' +
       '<button class="btn alt" data-act="import">Importar copia</button></div>' +
-      '<input type="file" id="file" accept="application/json,.json" hidden></section>';
+      '<input type="file" id="file" accept="application/json,.json" hidden></section>' +
+      '<p class="legend">Versión de la app: v' + VERSION + '</p>';
   }
 
   function renderReport() {
@@ -304,6 +306,7 @@
       'Los informes de años anteriores conservan los objetivos que tenían.</p>';
     html += '<div class="btns"><button class="btn alt" data-act="goals-reset"' + (same ? ' disabled' : '') + '>' +
       'Volver al plan inicial (' + L.DEFAULT_GOALS.gym + ' / ' + L.DEFAULT_GOALS.run + ' / ' + L.DEFAULT_GOALS.swim + ')</button></div>';
+    html += '<p class="legend">Versión de la app: v' + VERSION + '</p>';
     return html;
   }
 
@@ -435,6 +438,11 @@
 
   if (navigator.storage && navigator.storage.persist) { try { navigator.storage.persist(); } catch (e) {} }
   if ('serviceWorker' in navigator) {
+    // Si una versión nueva toma el control, recarga una vez para usarla (no recarga en la primera instalación).
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (hadController) location.reload(); else hadController = true;
+    });
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
   }
 
